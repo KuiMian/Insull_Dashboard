@@ -30,7 +30,7 @@ longitude = 'longitude'
 
 BaseURL = 'https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/'
 
-ApiKey = 'RXUKQPBJ3PWR56ZL94QPGLHBK'
+ApiKey = #######################
 
 yesterday = 'yesterday'
 
