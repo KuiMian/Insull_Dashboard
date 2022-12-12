@@ -1,253 +1,84 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[1]:
-
-
-import csv
-import codecs
-import urllib.request
-import urllib.error
-import sys
-
-import datetime
-import os
-import glob
-
 import numpy as np
 import pandas as pd
 
-# import logging
-# logging.basicConfig(format='[%(asctime)s]%(levelname)s:\n%(message)s', level=logging.DEBUG)
+import datetime
 
+import os
+from glob import glob
 
-# In[2]:
-
-
-name = 'name'
-latitude = 'latitude'
-longitude = 'longitude'
-
-BaseURL = 'https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/'
-
-ApiKey = #######################
-
-yesterday = 'yesterday'
-
-sheets = ['烟台', '德州', '东营','菏泽', '滨州', '潍坊', '青岛', '临沂', 
+sheets = ['烟台', '德州', '东营', '菏泽', '滨州', '潍坊', '青岛', '临沂',
           '威海', '济南', '济宁', '淄博', '枣庄', '泰安', '日照', '聊城', '莱芜']
+#
+# sheets = ['莱芜']
 
-# sheets = ['聊城', '莱芜']
-
-##########################
-
-Target = ['datetime', 'windspeed', 'windgust']
+WIND_TARGET = ['datetime', 'windspeed', 'windgust']
+SOLAR_TARGET = ['datetime', 'temp', 'cloudcover', 'solarradiation', 'solarenergy']
 
 base_path = 'data/'
-data_path = 'wind_data/'
+wind_data_path = base_path + 'wind_data/'
+solar_data_path = base_path + 'solar_data/'
 city_path = 'city/'
 summary_path = 'summary/'
 
-# result_path = 'myResult/'
-result_path = base_path + data_path
-
-# time_range = ('2022-7-1', '2022-11-21')
-
-time_range = yesterday
-
-# time_range = None
-##########################
+write_mode = 'w'
 
 
-# In[3]:
+def get_csv_files(path, suffix=''):
+    return glob(os.path.join(path, f'*{suffix}.csv'))
 
 
-def set_range_and_mode(time_range, circle=15):
-    
-    today = datetime.date.today()
-    yesterday = today - datetime.timedelta(days=1)
-    today_str = today.strftime('%Y-%m-%d')
-    yesterday_str = yesterday.strftime('%Y-%m-%d')
-    
-    if isinstance(time_range, (list, tuple)):
-        start, end = time_range
-        print(f'gather model: from {start} to {end}.')
-        
-        future_suffix = ''
-        write_mode = 'w'
-    
-    elif time_range == 'yesterday':
-        print(f'gather model: yesterday.')
-        start = end = yesterday_str
-        
-#         start = '2022-11-18'
-#         end = '2022-11-22'
-    
-        future_suffix = ''
-        write_mode = 'a'
-        
+def merge_history(history_ls, yesterday_ls):
+    suffix = '_yesterday.csv'
+
+    data = pd.read_csv(history_ls[-1])
+
+    dates = np.array(data['datetime'], dtype=np.datetime64)
+    now = datetime.datetime.now()
+    zero_yesterday = now - datetime.timedelta(days=1, hours=now.hour, minutes=now.minute, seconds=now.second,
+                                              microseconds=now.microsecond)
+
+    if zero_yesterday in dates:
+        print(f'merge pass', end='---')
     else:
-        print(f'gather model: the next {circle} days from {today_str}.')
 
-        start = f'next{circle}days'
-        end = ''
-        
-        future_suffix = '_future'
-        write_mode = 'w'
-        
-    return start, end, future_suffix, write_mode
+        del data, dates
 
-start, end, future_suffix, write_mode = set_range_and_mode(time_range)
-print(f'future_suffix: {future_suffix}\nwrite_mode: {write_mode}')
+        for filename in history_ls:
+            df_history = pd.read_csv(filename)
 
+            yesterday_name = filename[:-4] + suffix
 
-# In[4]:
+            df_yetserday = pd.read_csv(yesterday_name)
+
+            # os.remove(os.path.join(path, yesterday_name))
+
+            pd.concat([df_history, df_yetserday]).reset_index(drop=True).to_csv(filename[:-4] + '.csv')
 
 
-def make_dir(path):
-    if not os.path.exists(path):
-        os.mkdir(path)    
+def merge_all_history(path):
+    path += city_path
 
-def get_data_path():
-    
-    path = result_path
-    make_dir(path)
-    
-    return path
+    _path = path
 
-path = get_data_path()
+    print(f'_path: {_path}')
+    for sheet in sheets:
+        path += f'{sheet}/'
 
-print(f'data path: {path}\nwrite mode: {write_mode}')
+        all_files = get_csv_files(path)
 
-city_path = path + city_path
-summary_path = path + summary_path
+        future_files = get_csv_files(path, suffix='_future')
+        yesterday_files = get_csv_files(path, suffix='_yesterday')
+        history_files = list(set(all_files) - set(future_files) - set(yesterday_files))
 
-now_path = None
-sheet = None
+        merge_history(history_files, yesterday_files)
+        print(f'{sheet} merge done.')
 
-
-# In[5]:
+        path = _path
 
 
-def get_location_info(location):
-#     """
-#     list:[name, latitude, longitude]
-    
-#     """
-#     if isinstance(location, (list, tuple)):
-#         # to dataframe
-#         return location[0], f'{location[1]},{location[2]}'
-#     else:  # pandas.Dataframe
-#         return location[name], f'{location.latitude},{location.longitude}'
-    
-    return location[name], f'{location.latitude},{location.longitude}'
-
-    
-def get_ApiQuery(Location, StartDate=start, EndDate=end, UnitGroup='us', ContentType="csv", Include="hours"):
-    # basic query including location
-    ApiQuery = BaseURL + Location
-
-    # append the start and end date if present
-    if(len(StartDate)):
-        ApiQuery += "/" + StartDate
-        if(len(EndDate)):
-            ApiQuery += "/" + EndDate
-
-    # Url is completed. Now add query parameters (could be passed as GET or POST)
-    ApiQuery += "?"
-
-    # append each parameter as necessary
-    if(len(UnitGroup)):
-        ApiQuery += "&unitGroup=" + UnitGroup
-#         ApiQuery += "unitGroup=" + UnitGroup
-        
-
-    if(len(ContentType)):
-        ApiQuery += "&contentType=" + ContentType
-
-    if(len(Include)):
-        ApiQuery += "&include=" + Include
-
-    ApiQuery += "&key=" + ApiKey
-    
-    return ApiQuery
-
-def generate_csv_data(ApiQuery, filename):
-    try: 
-        CSVBytes = urllib.request.urlopen(ApiQuery)
-    except urllib.error.HTTPError  as e:
-        ErrorInfo= e.read().decode() 
-        print('Error code: ', e.code, ErrorInfo)
-        sys.exit()
-    except urllib.error.URLError as e:
-        ErrorInfo= e.read().decode() 
-        print('Error code: ', e.code,ErrorInfo)
-        sys.exit()
-    
-    data = CSVBytes.read().decode('utf-8')
-    
-    filename = f'{now_path}{filename}{future_suffix}.csv'
-    
-    # 若文件已存在则只在末尾追加数据部分，不会写入表头
-    if os.path.exists(filename) and write_mode == 'a':
-        data = data[223:]
-        
-    with open(filename, write_mode, encoding='UTF8') as myFile:
-        myFile.write(data)
-
-def gather_data(location, start=start, end=end):
-    location_name, loc_string = get_location_info(location)
-    
-    csv_file = now_path + location_name + '.csv'
-    if os.path.exists(csv_file):
-        data = pd.read_csv(csv_file)
-        
-        dates = np.array(data['datetime'], dtype=np.datetime64)
-        
-        now = datetime.datetime.now()
-        zero_yesterday = now - datetime.timedelta(days=1, hours=now.hour, minutes=now.minute, seconds=now.second, microseconds=now.microsecond)
-
-        if zero_yesterday in dates:
-            pass
-        else:
-            ApiQuery = get_ApiQuery(loc_string, start, end)
-
-            generate_csv_data(ApiQuery, location_name)
-#             print(f'{location_name} done.')
+def start():
+    merge_all_history(wind_data_path)
+    merge_all_history(solar_data_path)
 
 
-# In[ ]:
-
-
-'''
-更新昨日数据
-'''
-
-now_path = city_path
-make_dir(now_path)
-
-_path = now_path
-print(f'root path: {now_path}')
-print(f'*'*40)
-
-# update_yesterday()        
-
-for sheet in sheets:
-    now_path += f'{sheet}/'  # data/wind_data/city/烟台/
-
-    print(f'now_path: {now_path}')
-    make_dir(now_path)
-    
-    data = pd.read_excel('locations.xlsx', sheet_name=sheet)[[name, latitude, longitude]]
-    
-    _ = data.apply(gather_data, axis=1)
-    print('-'*40)
-
-    now_path = _path
-
-
-# In[ ]:
-
-
-
-
+start()
